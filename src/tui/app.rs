@@ -586,6 +586,8 @@ impl App {
         draw_result?;
         end_result?;
         self.sync_host_title(terminal)?;
+        #[cfg(feature = "e2e-tests")]
+        e2e_report_runtime(self.home.runtime_settled());
         Ok(())
     }
 
@@ -2632,6 +2634,20 @@ fn quit_intent(
         return QuitIntent::Confirm;
     }
     QuitIntent::Quit
+}
+
+/// Writes `ready` or `busy` to `AOE_E2E_RUNTIME_STATE` when it changes, so e2e tests can wait
+/// for an applied receipt without a footer label.
+#[cfg(feature = "e2e-tests")]
+fn e2e_report_runtime(settled: bool) {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static LAST: AtomicU8 = AtomicU8::new(u8::MAX);
+    let Some(path) = std::env::var_os("AOE_E2E_RUNTIME_STATE") else {
+        return;
+    };
+    if LAST.swap(u8::from(settled), Ordering::SeqCst) != u8::from(settled) {
+        let _ = std::fs::write(path, if settled { "ready" } else { "busy" });
+    }
 }
 
 #[cfg(feature = "e2e-tests")]

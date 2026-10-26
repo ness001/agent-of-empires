@@ -430,7 +430,7 @@ mod tests {
                 if cfg!(feature = "web") {
                     "Web dashboard"
                 } else {
-                    "Remote API access"
+                    "Connections: API server"
                 },
                 "R",
                 "Ctrl+R",

@@ -12,6 +12,7 @@ mod changelog;
 mod cheats;
 mod command_palette;
 mod confirm;
+mod connections;
 mod context_menu;
 mod custom_instruction;
 mod delete_options;
@@ -46,6 +47,7 @@ pub use command_palette::{
     builtin_commands, CommandPaletteDialog, PaletteAction, PaletteCommand, PaletteGroup,
 };
 pub use confirm::ConfirmDialog;
+pub use connections::{served_via, ConnectionsView, DaemonAttention, WebState};
 pub use context_menu::{ContextMenuAction, ContextMenuDialog};
 pub use custom_instruction::CustomInstructionDialog;
 pub use delete_options::{DeleteDialogConfig, DeleteOptions, UnifiedDeleteDialog};

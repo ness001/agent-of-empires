@@ -1572,6 +1572,13 @@ impl HomeView {
             }
             return true;
         }
+        if let Some(view) = &mut self.connections_view {
+            if let Some(DialogResult::Submit(())) = view.handle_click(col, row) {
+                self.connections_view = None;
+                self.open_serve();
+            }
+            return true;
+        }
         if let Some(dialog) = &self.update_confirm_dialog {
             if let Some(result) = dialog.handle_click(col, row) {
                 match result {
@@ -2107,6 +2114,18 @@ impl HomeView {
                 }
                 return None;
             }
+        }
+
+        if let Some(view) = &mut self.connections_view {
+            match view.handle_key(key) {
+                DialogResult::Continue => {}
+                DialogResult::Cancel => self.connections_view = None,
+                DialogResult::Submit(()) => {
+                    self.connections_view = None;
+                    self.open_serve();
+                }
+            }
+            return None;
         }
 
         // Command palette captures input ahead of the help overlay so its own
@@ -3036,7 +3055,7 @@ impl HomeView {
             ActionId::SetWorktreeName => self.open_worktree_name_for_selected(),
             ActionId::AddProject => self.open_add_project_for_selected(),
             ActionId::Diff => self.open_diff_for_selected(),
-            ActionId::Serve => self.open_serve(),
+            ActionId::Serve => self.open_connections(),
             ActionId::Settings => self.open_settings(),
             ActionId::Profiles => self.show_profile_picker(),
             ActionId::Projects => {
@@ -3724,6 +3743,19 @@ impl HomeView {
             return None;
         };
         Some(Action::SmartRenameNow(id))
+    }
+
+    /// R: the Connections hub. Its Web dashboard row reaches [`Self::open_serve`].
+    fn open_connections(&mut self) {
+        use crate::tui::dialogs::{served_via, ConnectionsView, WebState};
+        let web = if web_plugin_disabled() {
+            WebState::Disabled
+        } else if self.serve_running {
+            WebState::On(served_via())
+        } else {
+            WebState::Off
+        };
+        self.connections_view = Some(ConnectionsView::new(self.daemon_attention(), web));
     }
 
     fn open_serve(&mut self) {
