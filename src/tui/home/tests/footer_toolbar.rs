@@ -249,6 +249,10 @@ fn r_opens_connections_and_enter_reaches_the_web_dashboard() {
     );
     let screen = render_home_to_string(&mut env.view, 160, 40);
     assert!(screen.contains("Connections"), "{screen}");
+    // The open hub follows the dashboard rather than its state when R was pressed.
+    env.view.serve_running = true;
+    let screen = render_home_to_string(&mut env.view, 160, 40);
+    assert!(!screen.contains("Off \u{00B7} use AoE"), "{screen}");
 
     // A Daemon row, when the Daemon needs attention, comes first.
     if env.view.daemon_attention().is_some() {

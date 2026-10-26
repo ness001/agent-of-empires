@@ -46,7 +46,8 @@ pub(super) enum SidebarSection {
     Archived,
 }
 
-/// The `aoe.web` plugin serves the dashboard; with it disabled, `R` explains why instead.
+/// The `aoe.web` plugin serves the dashboard; with it disabled, the Connections row says so
+/// and Enter on it explains why.
 pub(super) fn web_plugin_disabled() -> bool {
     crate::plugin::registry()
         .get("aoe.web")
@@ -3747,15 +3748,29 @@ impl HomeView {
 
     /// R: the Connections hub. Its Web dashboard row reaches [`Self::open_serve`].
     fn open_connections(&mut self) {
-        use crate::tui::dialogs::{served_via, ConnectionsView, WebState};
-        let web = if web_plugin_disabled() {
+        let web = self.connections_web_state(None);
+        self.connections_view = Some(crate::tui::dialogs::ConnectionsView::new(
+            self.daemon_attention(),
+            web,
+        ));
+    }
+
+    /// The hub's Web dashboard row. `known` keeps a transport already read, so a refresh
+    /// reads `serve.mode` only when the dashboard turns on.
+    pub(super) fn connections_web_state(
+        &self,
+        known: Option<&crate::tui::dialogs::WebState>,
+    ) -> crate::tui::dialogs::WebState {
+        use crate::tui::dialogs::{served_via, WebState};
+        if web_plugin_disabled() {
             WebState::Disabled
-        } else if self.serve_running {
-            WebState::On(served_via())
-        } else {
+        } else if !self.serve_running {
             WebState::Off
-        };
-        self.connections_view = Some(ConnectionsView::new(self.daemon_attention(), web));
+        } else if let Some(WebState::On(via)) = known {
+            WebState::On(*via)
+        } else {
+            WebState::On(served_via())
+        }
     }
 
     fn open_serve(&mut self) {

@@ -1235,6 +1235,13 @@ impl HomeView {
             telemetry_consent_dialog,
             tips_dialog,
         );
+        if let Some(view) = &self.connections_view {
+            let web = self.connections_web_state(Some(view.web()));
+            let daemon = self.daemon_attention();
+            if let Some(view) = &mut self.connections_view {
+                view.refresh(daemon, web);
+            }
+        }
         render_dialogs!(connections_view);
         if self.snooze_duration_dialog.is_none() {
             render_dialogs!(info_dialog);
@@ -4649,11 +4656,9 @@ pub(super) fn live_pane_origin(
     )
 }
 
-/// The dashboard entry is a hint until serving, then outranks the other shortcuts.
-/// A build without the dashboard bundle serves the API only, so it never says "Web".
 /// The footer's R entry: the Daemon's problem (red) or limit (dim) when it has one, else
-/// the Web dashboard's status or hint. A state is priority 0 and the hint 1, so a state is
-/// the last thing dropped at narrow widths.
+/// the Web dashboard's status or hint ("API" in a build without the dashboard bundle). A
+/// state is priority 0 and the hint 1, so a state is the last thing dropped at narrow widths.
 fn runtime_footer_entry(
     attention: Option<crate::tui::dialogs::DaemonAttention>,
     running: bool,
@@ -4719,18 +4724,11 @@ mod tests {
                 format!("^R \u{25CF} {what}"),
                 theme.running,
             ),
-            // A problem is red and replaces even a running dashboard's status.
-            (
-                Some(A::Offline),
-                true,
-                false,
-                0,
-                "R \u{25CF} Daemon offline".into(),
-                theme.error,
-            ),
+            // A problem is red and replaces even a running dashboard's status. An offline
+            // Daemon never reaches the footer: Connections takes over the home screen.
             (
                 Some(A::OutcomeUnknown),
-                false,
+                true,
                 false,
                 0,
                 "R \u{25CF} Runtime outcome unknown".into(),

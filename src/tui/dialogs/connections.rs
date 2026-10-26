@@ -109,6 +109,23 @@ impl ConnectionsView {
         }
     }
 
+    /// Follow the Daemon and Web dashboard while open, keeping the selected row.
+    pub fn refresh(&mut self, daemon: Option<DaemonAttention>, web: WebState) {
+        let selected = self.rows().get(self.selected).copied();
+        self.daemon = daemon;
+        self.web = web;
+        self.selected = self
+            .rows()
+            .iter()
+            .position(|row| Some(*row) == selected)
+            .unwrap_or(0);
+    }
+
+    /// The Web dashboard row's state, so a refresh can keep a known transport.
+    pub fn web(&self) -> &WebState {
+        &self.web
+    }
+
     fn rows(&self) -> Vec<Row> {
         self.daemon
             .map(|_| Row::Daemon)
@@ -305,18 +322,6 @@ fn host_name() -> Option<String> {
     (!short.is_empty()).then(|| short.to_string())
 }
 
-/// How the running Web dashboard is reachable, from the `serve.mode` the Daemon writes.
-pub fn served_via() -> Option<&'static str> {
-    let mode =
-        std::fs::read_to_string(crate::session::get_app_dir().ok()?.join("serve.mode")).ok()?;
-    match mode.trim() {
-        "tailscale" => Some("Tailscale"),
-        "tunnel" => Some("Cloudflare"),
-        "local" => Some("Local network"),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,5 +436,19 @@ mod tests {
             press(&mut view, KeyCode::Enter),
             DialogResult::Continue
         ));
+
+        // A refresh follows the Daemon and keeps the selected row when the rows change.
+        press(&mut view, KeyCode::Down);
+        view.refresh(None, WebState::On(None));
+        assert!(matches!(
+            press(&mut view, KeyCode::Enter),
+            DialogResult::Submit(())
+        ));
+        view.refresh(Some(DaemonAttention::OutcomeUnknown), WebState::On(None));
+        assert!(matches!(
+            press(&mut view, KeyCode::Enter),
+            DialogResult::Submit(())
+        ));
+        assert!(screen(&mut view).contains("Outcome unknown"));
     }
 }
