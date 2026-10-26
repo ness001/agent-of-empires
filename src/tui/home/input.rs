@@ -3780,7 +3780,7 @@ impl HomeView {
                 "The aoe.web plugin is disabled, so the web dashboard cannot \
                      be served.\n\n\
                      Re-enable it in Settings > Plugins (or run \
-                     `aoe plugin enable aoe.web`), then press R again.",
+                     `aoe plugin enable aoe.web`), then open it again from R.",
             ));
             return;
         }
