@@ -3756,7 +3756,7 @@ impl HomeView {
     }
 
     /// The hub's Web dashboard row. `known` keeps a transport already read, so a refresh
-    /// reads `serve.mode` only when the dashboard turns on.
+    /// reads `serve.mode` only until it names one.
     pub(super) fn connections_web_state(
         &self,
         known: Option<&crate::tui::dialogs::WebState>,
@@ -3766,8 +3766,8 @@ impl HomeView {
             WebState::Disabled
         } else if !self.serve_running {
             WebState::Off
-        } else if let Some(WebState::On(via)) = known {
-            WebState::On(*via)
+        } else if let Some(WebState::On(Some(via))) = known {
+            WebState::On(Some(via))
         } else {
             WebState::On(served_via())
         }
