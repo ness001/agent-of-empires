@@ -13,7 +13,7 @@ fn run_in(app_dir: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let mut conn = Connection::open(&path).context("open event database for v051")?;
+    let mut conn = Connection::open(&path).context("open event database for v053")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let has_events: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'acp_events')",
@@ -68,7 +68,7 @@ fn run_in(app_dir: &Path) -> Result<()> {
          DROP TABLE background_tracking_backfill;",
     )?;
     tx.commit()?;
-    info!("v051: preserved retained current-conversation background identities");
+    info!("v053: preserved retained current-conversation background identities");
     Ok(())
 }
 
