@@ -108,7 +108,7 @@ The background-agent panel consumes structured omp task details, not rendered to
 
 Task tracking resumes after a daemon restart when the same native conversation is still running. See [background tracking internals](development/internals/structured-view.md#worker-lifecycle) for persistence and recovery details.
 
-The panel does not offer Stop for omp tasks because its ACP adapter does not expose background-task cancellation; cancelling the parent prompt does not stop those detached tasks.
+Detached background task progress does not count as foreground prompt activity or postpone recovery of an orphaned resumed turn. Mixed task batches still count as foreground work while blocking siblings are active. The panel does not offer Stop for omp tasks because its ACP adapter does not expose background-task cancellation; cancelling the parent prompt does not stop those detached tasks.
 
 Live progress and completion after the parent prompt ends require the native `omp acp` adapter to forward task updates for the session's lifetime. AoE support alone does not guarantee those source updates: that bridge must be deployed in the installed omp adapter. See the [task update contract](development/internals/structured-view.md#omp-async-task-updates).
 
