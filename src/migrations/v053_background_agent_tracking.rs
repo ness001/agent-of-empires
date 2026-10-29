@@ -5,6 +5,8 @@ use rusqlite::Connection;
 use tracing::info;
 
 pub fn run() -> Result<()> {
+    // The prepared tracking branch used 51 before upstream assigned it to structured view.
+    super::v051_structured_view::run()?;
     run_in(&crate::session::get_app_dir()?)
 }
 
@@ -13,7 +15,7 @@ fn run_in(app_dir: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let mut conn = Connection::open(&path).context("open event database for v051")?;
+    let mut conn = Connection::open(&path).context("open event database for v053")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let has_events: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'acp_events')",
@@ -68,13 +70,60 @@ fn run_in(app_dir: &Path) -> Result<()> {
          DROP TABLE background_tracking_backfill;",
     )?;
     tx.commit()?;
-    info!("v051: preserved retained current-conversation background identities");
+    info!("v053: preserved retained current-conversation background identities");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn divergent_schema_histories_converge_and_remain_idempotent() {
+        for (version, prepared_tracking) in [(51, true), (51, false), (52, false)] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::session::test_support::isolate_app_dir_at(tmp.path());
+            let app = crate::session::get_app_dir().unwrap();
+            std::fs::create_dir_all(&app).unwrap();
+            let config = app.join("config.toml");
+            std::fs::write(&config, "[acp]\noffer_structured_in_new_session = false\n").unwrap();
+            let conn = Connection::open(app.join("acp_events.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE acp_events (session_id TEXT, seq INTEGER, event_json TEXT, discriminant TEXT);
+                 INSERT INTO acp_events VALUES
+                 ('s', 1, '{\"AcpSessionAssigned\":{\"acp_session_id\":\"native\"}}', 'AcpSessionAssigned'),
+                 ('s', 2, '{\"BackgroundAgentLaunched\":{\"agent_id\":\"child\",\"wire_tracked\":true}}', 'BackgroundAgentLaunched');",
+            ).unwrap();
+            if prepared_tracking {
+                run_in(&app).unwrap();
+            } else {
+                super::super::v051_structured_view::run().unwrap();
+            }
+            std::fs::write(app.join(".schema_version"), version.to_string()).unwrap();
+            for _ in 0..2 {
+                crate::migrations::run_migrations().unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(app.join(".schema_version")).unwrap(),
+                    "53"
+                );
+                let config: toml::Table =
+                    std::fs::read_to_string(&config).unwrap().parse().unwrap();
+                assert_eq!(config["acp"]["structured_view"].as_str(), Some("off"));
+                assert!(config["acp"]
+                    .get("offer_structured_in_new_session")
+                    .is_none());
+                let identity: (String, bool) = conn
+                    .query_row(
+                        "SELECT agent_id, terminal FROM acp_background_agent_identities",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap();
+                assert_eq!(identity, ("child".into(), false));
+            }
+        }
+    }
 
     #[test]
     fn migration_backfills_v012_schema_without_discriminant_and_preserves_rows() {
