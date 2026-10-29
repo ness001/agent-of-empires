@@ -200,6 +200,7 @@ struct Launch {
     mcp_servers: Vec<McpServer>,
     claude_home: Option<PathBuf>,
     cancellation: tokio_util::sync::CancellationToken,
+    background_agent_tracking_seed: Option<crate::acp::event_store::BackgroundAgentTrackingSeed>,
 }
 
 impl Launch {
@@ -245,6 +246,7 @@ impl Launch {
             runner,
             cancellation: self.cancellation.clone(),
             shutdown: shutdown.clone(),
+            background_agent_tracking_seed: self.background_agent_tracking_seed,
         };
         let span = tracing::info_span!("acp_session", session = %label);
         let task = tokio::spawn(run_connection_task(transport, params).instrument(span));
@@ -520,6 +522,7 @@ impl AcpClient {
                 .and_then(|binding| binding.stores.first())
                 .cloned(),
             cancellation: cancellation.clone(),
+            background_agent_tracking_seed: None,
         };
 
         if let Some(socket_path) = config.socket_path.clone() {
@@ -657,6 +660,9 @@ impl AcpClient {
         deadline: Option<tokio::time::Instant>,
         launch_lease: Option<crate::acp::runner_lifecycle::Lease>,
         claude_home: Option<PathBuf>,
+        background_agent_tracking_seed: Option<
+            crate::acp::event_store::BackgroundAgentTrackingSeed,
+        >,
     ) -> Result<Self, AcpError> {
         // The binary name keeps the compatibility gate active on reattach; an
         // unknown agent maps to `Other` anyway.
@@ -688,6 +694,7 @@ impl AcpClient {
                 .map_or_else(tokio_util::sync::CancellationToken::new, |lease| {
                     lease.cancellation().child_token()
                 }),
+            background_agent_tracking_seed,
         };
         Self::connect_via_socket(socket_path, launch, deadline).await
     }
@@ -770,22 +777,14 @@ impl AcpClient {
         Ok(resolver)
     }
 
-    /// Spawn tailers for sub-agents that survived a daemon restart, from
-    /// every unresolved `BackgroundAgentLaunched` for the session. A send
-    /// failure just means the connection already died; the caller's next
-    /// sweep detaches what is left.
+    /// Resume background tracking on a surviving runner after daemon restart.
     pub async fn resume_background_tailing(
         &self,
         launches: Vec<crate::acp::event_store::UnresolvedBackgroundAgentLaunch>,
     ) -> Result<(), AcpError> {
         let cmd_tx = self.cmd_tx.as_ref().ok_or(AcpError::NotRunning)?;
         cmd_tx
-            .send(ClientCmd::ResumeBackgroundTailing(
-                launches
-                    .into_iter()
-                    .map(|l| (l.agent_id, l.output_file))
-                    .collect(),
-            ))
+            .send(ClientCmd::ResumeBackgroundTailing(launches))
             .await
             .map_err(|_| AcpError::AgentExited)
     }
