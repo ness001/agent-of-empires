@@ -65,6 +65,8 @@ const RETENTION_PINNED_EVENT_DISCRIMINANTS: &[&str] = &[
     "BackgroundAgentCompleted",
     "BackgroundTaskStarted",
     "BackgroundTaskFinished",
+    "GoalUpdated",
+    "AsyncTaskUpdated",
 ];
 
 /// SQLite-backed structured view event log.

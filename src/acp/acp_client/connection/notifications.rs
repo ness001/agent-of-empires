@@ -71,6 +71,7 @@ pub(super) struct Shared {
     pub(super) agent_msg_dedup: std::sync::Mutex<AgentMessageDedup>,
     compaction: std::sync::Mutex<CompactionTracker>,
     omp_tasks: std::sync::Mutex<OmpTaskTracker>,
+    claude_tasks: std::sync::Mutex<crate::acp::acp_client::claude_tasks::ClaudeTaskTracker>,
     pub(super) tool_context_cache: ToolContextCache,
     bg_transcript_source: TranscriptSource,
     pub(super) bg_tasks: Arc<ActiveTasks>,
@@ -118,6 +119,7 @@ impl Shared {
             agent_msg_dedup: Default::default(),
             compaction: Default::default(),
             omp_tasks: Default::default(),
+            claude_tasks: Default::default(),
             tool_context_cache: Arc::new(std::sync::Mutex::new(ToolCallContextCache::default())),
             bg_transcript_source,
             bg_tasks: Arc::default(),
@@ -157,6 +159,10 @@ impl Shared {
     /// Called under the ingress fence, before the committed updates replay.
     pub(super) fn commit_background_tracking(&self, previous: Option<&SessionId>, id: &SessionId) {
         if previous.is_some_and(|previous| previous != id) {
+            self.claude_tasks
+                .lock()
+                .expect("Claude task tracker mutex poisoned")
+                .clear();
             self.omp_tasks
                 .lock()
                 .expect("omp task tracker mutex poisoned")
@@ -199,6 +205,37 @@ impl Shared {
         local_prompt_signals: bool,
     ) {
         let suppressing = self.suppress_history_replay.load(Ordering::Relaxed);
+        if self.profile.native_config_agent == Some("claude") {
+            let native = self
+                .claude_tasks
+                .lock()
+                .expect("Claude task tracker mutex poisoned")
+                .observe(&notification);
+            if let Some(events) = native {
+                if !suppressing {
+                    for event in events {
+                        {
+                            let mut agents = self
+                                .between_prompt
+                                .bg_agents
+                                .lock()
+                                .expect("background agent mutex poisoned");
+                            match &event {
+                                Event::BackgroundAgentLaunched { agent_id, .. } => {
+                                    agents.insert(agent_id.clone());
+                                }
+                                Event::BackgroundAgentCompleted { agent_id, .. } => {
+                                    agents.remove(agent_id);
+                                }
+                                _ => {}
+                            }
+                        }
+                        self.emit(event).await;
+                    }
+                }
+                return;
+            }
+        }
         self.last_event_at.store(now_ms(), Ordering::Relaxed);
         // Drop the adapter's leaked restatement before anything sees it
         // (#2281). Replayed history resets rather than feeds the deduper.

@@ -412,6 +412,43 @@ pub struct BackgroundAgentRecord {
     pub warning: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionGoal {
+    pub objective: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AsyncTaskRecord {
+    pub id: String,
+    pub name: String,
+    pub task_type: String,
+    pub description: String,
+    pub state: String,
+    pub show_in_transcript: bool,
+    pub can_stop: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<serde_json::Value>,
+}
+
+impl AsyncTaskRecord {
+    pub fn is_active(&self) -> bool {
+        matches!(self.state.as_str(), "running" | "paused")
+    }
+}
+
 /// What the main turn is doing for the sidebar. Kept apart from `turn_active`,
 /// which dispatch reads and which must not follow display-only signals.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -430,6 +467,10 @@ pub struct AcpState {
     pub model: Option<String>,
     pub mode: SessionMode,
 
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,
+    #[serde(default)]
+    pub async_tasks: Vec<AsyncTaskRecord>,
     pub current_plan: Option<Plan>,
     pub todos: Vec<Todo>,
     pub in_flight_tool: Option<ToolCall>,
@@ -534,6 +575,12 @@ pub(crate) const RATE_LIMIT_EXHAUSTED_RETRIES_REASON: &str = "rate_limit_exhaust
 /// A state mutation, persisted verbatim in the event log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
+    GoalUpdated {
+        goal: Option<SessionGoal>,
+    },
+    AsyncTaskUpdated {
+        task: AsyncTaskRecord,
+    },
     PlanUpdated {
         plan: Plan,
     },
@@ -853,6 +900,7 @@ impl AcpState {
     /// done like any other (#4001).
     pub fn has_active_background_agent(&self) -> bool {
         !self.background_tasks.is_empty()
+            || self.async_tasks.iter().any(AsyncTaskRecord::is_active)
             || self.background_agents.iter().any(|a| a.ended_at.is_none())
     }
 
@@ -870,6 +918,14 @@ impl AcpState {
 
     pub fn apply_event(&mut self, seq: u64, event: Event) -> Result<u64, StateError> {
         match event {
+            Event::GoalUpdated { goal } => self.goal = goal,
+            Event::AsyncTaskUpdated { task } => {
+                match self.async_tasks.iter_mut().find(|t| t.id == task.id) {
+                    Some(existing) if !existing.is_active() && task.is_active() => {}
+                    Some(existing) => *existing = task,
+                    None => self.async_tasks.push(task),
+                }
+            }
             Event::PlanUpdated { plan } => self.current_plan = Some(plan),
             Event::TodoListUpdated { todos } => self.todos = todos,
             Event::ToolCallStarted { tool_call } => {
@@ -1049,6 +1105,10 @@ impl AcpState {
             // Clears the conversation; adapter-scoped commands, modes and
             // selectors are never re-announced, so they stay.
             Event::SessionCleared => {
+                self.goal = None;
+                self.async_tasks.clear();
+                self.background_agents.clear();
+                self.background_tasks.clear();
                 self.usage = None;
                 self.current_plan = None;
                 self.mode = SessionMode::Default;
@@ -1221,6 +1281,10 @@ impl AcpState {
     /// The new backend knows nothing of the prior agent's session or capabilities.
     fn switch_agent(&mut self, from: String, to: String, reason: String) {
         self.agent = AgentName(to.clone());
+        self.goal = None;
+        self.async_tasks.clear();
+        self.background_agents.clear();
+        self.background_tasks.clear();
         self.rate_limit = None;
         // The prior agent's advisories say nothing about the new one.
         self.session_notices.clear();

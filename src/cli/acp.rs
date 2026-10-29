@@ -1227,6 +1227,8 @@ fn map_http(e: HttpError) -> anyhow::Error {
 fn event_kind(event: &crate::acp::Event) -> &'static str {
     use crate::acp::Event;
     match event {
+        Event::GoalUpdated { .. } => "goal_updated",
+        Event::AsyncTaskUpdated { .. } => "async_task_updated",
         Event::PlanUpdated { .. } => "plan_updated",
         Event::TodoListUpdated { .. } => "todo_list_updated",
         Event::SessionTitleSuggested { .. } => "session_title_suggested",

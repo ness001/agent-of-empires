@@ -15,6 +15,28 @@ export interface PlanStep {
   status: PlanStepStatus;
 }
 
+export interface Goal {
+  objective: string;
+  status: string;
+  iterations?: number | null;
+  last_reason?: string | null;
+  created_at?: unknown;
+}
+
+export interface AsyncTask {
+  id: string;
+  name: string;
+  task_type: string;
+  description: string;
+  state: string;
+  show_in_transcript: boolean;
+  can_stop: boolean;
+  tool_call_id?: string | null;
+  summary?: string | null;
+  last_tool?: string | null;
+  usage?: unknown;
+}
+
 export interface Plan {
   plan_id: string;
   version: number;
@@ -348,6 +370,8 @@ export type AcpEvent =
   | { RateLimitAutoResumed: { resets_at: string; manual?: boolean } }
   | { SessionNotice: { severity: string; title: string; description?: string | null; key?: string | null } }
   | { UsageUpdated: { usage: SessionUsage } }
+  | { GoalUpdated: { goal: Goal | null } }
+  | { AsyncTaskUpdated: { task: AsyncTask } }
   | { ModeChanged: { mode: SessionMode } }
   | {
       ModesAvailable: {
@@ -520,6 +544,8 @@ export interface ReducedState {
   /** Open background task ids; the daemon omits the field when none are open. */
   background_tasks?: string[];
   background_agents?: BackgroundAgentWire[];
+  goal?: Goal | null;
+  async_tasks?: AsyncTask[];
 }
 
 export interface AcpState {
@@ -617,6 +643,8 @@ export interface AcpState {
   agentOrphaned: boolean;
   /** Async sub-agents launched this session, oldest first. */
   backgroundAgents: BackgroundAgent[];
+  goal: Goal | null;
+  asyncTasks: AsyncTask[];
   /** Ids of running background tasks that are not sub-agents (backgrounded commands). */
   backgroundTasks: string[];
   /** Agent-pushed advisories for the current turn, oldest first. */
@@ -915,6 +943,8 @@ export function emptyAcpState(): AcpState {
     agentUnresponsive: false,
     agentOrphaned: false,
     backgroundAgents: [],
+    goal: null,
+    asyncTasks: [],
     backgroundTasks: [],
     modeSwitchFailed: null,
     lastAgentSwitch: null,
@@ -975,6 +1005,12 @@ export function applyEvent(state: AcpState, frame: AcpFrame): AcpState {
       // Agent-initiated work still opens a turn, mirroring `AcpState::apply_event`.
       next.serverTurnActive = true;
       next.turnActive = true;
+    }
+    if (event === "SessionCleared") {
+      next.goal = null;
+      next.asyncTasks = [];
+      next.backgroundAgents = [];
+      next.backgroundTasks = [];
     }
     if (event === "ConversationCompacted" || event === "SessionCleared") {
       const priorUsage = state.sessionUsage?.cost?.amount ?? 0;
@@ -1227,6 +1263,10 @@ export function applyEvent(state: AcpState, frame: AcpFrame): AcpState {
   }
   if ("AgentSwitched" in event) {
     const { from, to, reason } = event.AgentSwitched;
+    next.goal = null;
+    next.asyncTasks = [];
+    next.backgroundAgents = [];
+    next.backgroundTasks = [];
     const now = new Date().toISOString();
     // What the new backend re-advertises is dropped server-side; client cost bookkeeping and banners stay here.
     next.sessionUsage = null;
@@ -1254,6 +1294,16 @@ export function applyEvent(state: AcpState, frame: AcpFrame): AcpState {
     const REJECTED_PROMPTS_CAP = 5;
     next.rejectedPrompts = [...next.rejectedPrompts, entry].slice(-REJECTED_PROMPTS_CAP);
     closeTurn(next);
+    return next;
+  }
+  if ("GoalUpdated" in event) {
+    next.goal = event.GoalUpdated.goal;
+    return next;
+  }
+  if ("AsyncTaskUpdated" in event) {
+    const task = event.AsyncTaskUpdated.task;
+    const found = next.asyncTasks.some((t) => t.id === task.id);
+    next.asyncTasks = found ? next.asyncTasks.map((t) => (t.id === task.id ? task : t)) : [...next.asyncTasks, task];
     return next;
   }
   if ("BackgroundAgentLaunched" in event) {
@@ -1356,6 +1406,8 @@ export function applyReducedState(state: AcpState, reduced: ReducedState, unchan
     model: reduced.model,
     mode: reduced.mode,
     plan: reduced.current_plan,
+    goal: holds("goal") ? state.goal : (reduced.goal ?? null),
+    asyncTasks: holds("async_tasks") ? state.asyncTasks : (reduced.async_tasks ?? []),
     inFlightTool: reduced.in_flight_tool,
     pendingApprovals: reduced.pending_approvals.filter((a) => !resolved.has(a.nonce)),
     pendingElicitations: reduced.pending_elicitations.filter((e) => !resolved.has(e.nonce)),
@@ -1484,8 +1536,14 @@ export function hasActiveBackgroundAgent(state: Pick<AcpState, "backgroundAgents
 
 /** Display-only busy signal for the runtime spinner. Distinct from `turnActive`,
  *  which tracks only the main turn because send-vs-queue composer gating reads it. */
-export function isVisiblyBusy(state: Pick<AcpState, "turnActive" | "backgroundAgents" | "backgroundTasks">): boolean {
-  return state.turnActive || hasActiveBackgroundAgent(state);
+export function isVisiblyBusy(
+  state: Pick<AcpState, "turnActive" | "backgroundAgents" | "backgroundTasks"> & Partial<Pick<AcpState, "asyncTasks">>,
+): boolean {
+  return (
+    state.turnActive ||
+    hasActiveBackgroundAgent(state) ||
+    (state.asyncTasks ?? []).some((task) => task.state === "running" || task.state === "paused")
+  );
 }
 
 /** Mirror the daemon's turn-close edges; `GET /acp/replay` serves raw events without `reduced_state`. */
@@ -1554,6 +1612,8 @@ export function normaliseTurnState(
       : 0;
   return {
     ...state,
+    goal: state.goal ?? null,
+    asyncTasks: state.asyncTasks ?? [],
     backgroundAgents: (state.backgroundAgents ?? []).map((agent) => ({
       ...agent,
       wireTracked: agent.wireTracked ?? false,

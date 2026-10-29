@@ -20,6 +20,7 @@ import { ChromeCollapseHandle, CollapsibleRegion } from "../CollapsibleChrome";
 import { AcpFileRefContext } from "./AcpFileRefContext";
 import { AcpRuntime, type AcpContext } from "./AcpRuntime";
 import { ApprovalCard } from "./ApprovalCard";
+import { ActivityStrip } from "./ActivityStrip";
 import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { AttentionChime } from "./AttentionChime";
 import { BackgroundAgentsContext } from "./backgroundAgentsContext";
@@ -220,6 +221,7 @@ function AcpChrome({
           elicitations={state.pendingElicitations.length}
         />
       )}
+      <ActivityStrip goal={state.goal} agents={state.backgroundAgents} tasks={state.asyncTasks} />
       <PlanStrip plan={state.plan} />
 
       <RateLimitRecoverySection

@@ -653,8 +653,16 @@ pub(super) fn map_update_to_events(
         },
         // Folded into the completion by `CompactionTracker`.
         SessionUpdate::CompactionSummaryChunk(_) => Vec::new(),
-        // AoE owns automatic renaming, so agent titles are ignored.
-        SessionUpdate::SessionInfoUpdate(_) => Vec::new(),
+        // AoE owns titles, but session metadata also carries the runtime goal.
+        update @ SessionUpdate::SessionInfoUpdate(_) => {
+            if profile.native_config_agent == Some("claude") {
+                super::claude_tasks::goal_event(&update)
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
         other => vec![raw_event(&other)],
     }
 }

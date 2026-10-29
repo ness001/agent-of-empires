@@ -134,7 +134,10 @@ impl SessionIngressNotification {
         } else {
             None
         };
-        Ok((serde_json::from_value(params).map_err(invalid)?, wire_bytes))
+        Ok((
+            super::claude_tasks::decode_notification(params).map_err(invalid)?,
+            wire_bytes,
+        ))
     }
 }
 
@@ -149,6 +152,7 @@ pub(super) struct SessionIngress {
 #[derive(Default)]
 struct IdentityState {
     current: Option<SessionId>,
+    children: std::collections::HashSet<SessionId>,
     pending: Option<Establishment>,
     generation: u64,
     failed: bool,
@@ -244,8 +248,11 @@ impl SessionIngress {
             .take()
             .map(|pending| pending.updates)
             .unwrap_or_default();
-        updates.retain(|notification| Some(&notification.session_id) == id.as_ref());
+        if state.current != id {
+            state.children.clear();
+        }
         state.current = id;
+        updates.retain(|notification| Self::admit_notification(&mut state, notification));
         drop(state);
         self.changed.notify_waiters();
         Ok(updates)
@@ -304,7 +311,28 @@ impl SessionIngress {
             pending.updates.push(notification);
             return Ok(None);
         }
-        Ok((state.current.as_ref() == Some(&notification.session_id)).then_some(notification))
+        Ok(Self::admit_notification(&mut state, &notification).then_some(notification))
+    }
+
+    fn admit_notification(state: &mut IdentityState, notification: &SessionNotification) -> bool {
+        if state.current.as_ref() != Some(&notification.session_id)
+            && !state.children.contains(&notification.session_id)
+        {
+            return false;
+        }
+        if let Some(raw) = super::claude_tasks::native_update(&notification.update) {
+            if raw.get("sessionUpdate").and_then(serde_json::Value::as_str)
+                == Some("subagent_spawned")
+            {
+                if let Some(id) = raw
+                    .get("subagentSessionId")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    state.children.insert(SessionId::new(id.to_owned()));
+                }
+            }
+        }
+        true
     }
 
     fn request_admission(&self, id: &SessionId) -> RequestAdmission {
@@ -319,7 +347,7 @@ impl SessionIngress {
                 RequestAdmission::Reject
             };
         }
-        if state.current.as_ref() == Some(id) {
+        if state.current.as_ref() == Some(id) || state.children.contains(id) {
             RequestAdmission::Active
         } else {
             RequestAdmission::Reject
@@ -424,6 +452,61 @@ mod tests {
 
     fn notif(id: &str) -> SessionNotification {
         SessionNotification::new(id.to_string(), text_chunk("x", None))
+    }
+
+    #[tokio::test]
+    async fn native_children_require_an_admitted_spawn_and_reset_with_the_root() {
+        let ingress = SessionIngress::new(Some(SessionId::from("root")));
+        assert!(ingress
+            .notification(notif("child"), None)
+            .await
+            .unwrap()
+            .is_none());
+        let spawn = |parent: &str, child: &str| {
+            super::super::claude_tasks::decode_notification(serde_json::json!({
+                "sessionId": parent,
+                "update": {"sessionUpdate":"subagent_spawned","subagentSessionId":child,"name":"Review","task":"Check","capabilities":{}}
+            })).unwrap()
+        };
+        assert!(ingress
+            .notification(spawn("foreign", "child"), None)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(ingress
+            .notification(notif("child"), None)
+            .await
+            .unwrap()
+            .is_none());
+        drop(
+            ingress
+                .notification(spawn("root", "child"), None)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        drop(
+            ingress
+                .notification(notif("child"), None)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        drop(ingress.request(&SessionId::from("child")).await.unwrap());
+        ingress.begin();
+        ingress
+            .notification(spawn("next", "nested"), None)
+            .await
+            .unwrap();
+        ingress.notification(notif("nested"), None).await.unwrap();
+        let replay = ingress.finish(Some(SessionId::from("next"))).unwrap();
+        assert_eq!(replay.len(), 2);
+        assert!(ingress
+            .notification(notif("child"), None)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(ingress.request(&SessionId::from("child")).await.is_err());
     }
 
     #[test]

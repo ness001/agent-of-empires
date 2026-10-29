@@ -49,6 +49,18 @@ pub(super) fn build_initialize_request() -> InitializeRequest {
         )
 }
 
+/// Standard subagent negotiation does not enable AIR's output-stripping mode.
+pub(super) fn session_initialize_params(
+    profile: &crate::acp::agent_profiles::AgentProfile,
+) -> serde_json::Value {
+    let mut params =
+        serde_json::to_value(build_initialize_request()).expect("initialize serializes");
+    if profile.native_config_agent == Some("claude") {
+        params["clientCapabilities"]["subagents"] = serde_json::json!({});
+    }
+    params
+}
+
 /// Bounded so a wedged agent (the `npx -y` first-run download stall) returns a
 /// typed error instead of parking the supervisor. `install_binary` points the
 /// timeout message at the configured agent's own install command.
@@ -145,7 +157,13 @@ mod tests {
     /// path (the Read card would show only "completed").
     #[test]
     fn initialize_does_not_declare_the_air_extension() {
-        let wire = serde_json::to_value(build_initialize_request()).expect("serialize");
+        let wire = session_initialize_params(&crate::acp::agent_profiles::CLAUDE);
+        assert_eq!(
+            wire.pointer("/clientCapabilities/subagents"),
+            Some(&serde_json::json!({}))
+        );
+        let other = session_initialize_params(&crate::acp::agent_profiles::CODEX);
+        assert!(other.pointer("/clientCapabilities/subagents").is_none());
         assert_eq!(
             wire.pointer("/clientCapabilities/_meta/jetbrains"),
             None,

@@ -5,6 +5,7 @@
 //! the public surface, and each concern lives in a submodule.
 
 mod between_prompt;
+mod claude_tasks;
 mod close;
 mod commands;
 mod config_options;

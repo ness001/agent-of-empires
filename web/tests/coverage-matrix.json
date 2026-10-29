@@ -4520,6 +4520,21 @@
       "components": ["web/src/hooks/useAcpSession.ts", "web/src/lib/acpTypes.ts", "web/src/components/acp/Composer.tsx"]
     },
     {
+      "id": "acp.mobile-activity",
+      "kind": "mocked-playwright",
+      "risk": "medium",
+      "specs": [
+        "tests/acp-mobile-activity.spec.ts",
+        "src/lib/acpActivity.test.ts",
+        "src/components/acp/__tests__/ActivityStrip.test.tsx"
+      ],
+      "components": [
+        "web/src/components/acp/ActivityStrip.tsx",
+        "web/src/components/acp/StructuredView.tsx",
+        "web/src/lib/acpTypes.ts"
+      ]
+    },
+    {
       "id": "acp.auth-status",
       "kind": "vitest",
       "risk": "medium",

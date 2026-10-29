@@ -29,7 +29,7 @@ use crate::acp::acp_client::config_options::{
 };
 use crate::acp::acp_client::control::{establish_session_v3, DaemonControlClient};
 use crate::acp::acp_client::errors::{acp_internal_error, AcpError, IncompatibleAgentError};
-use crate::acp::acp_client::handshake::{build_initialize_request, should_fork};
+use crate::acp::acp_client::handshake::{session_initialize_params, should_fork};
 use crate::acp::acp_client::lifecycle::LifecycleEnvelope;
 use crate::acp::acp_client::session_identity::ordered_session_request;
 
@@ -120,20 +120,21 @@ pub(super) async fn establish(
     if matches!(ctx.mode, ConnectMode::Fresh { .. }) {
         shared.emit(Event::AuthStatusUpdated { status: None }).await;
     }
-    let init: InitializeResponse = match ctx.control.as_ref() {
-        Some(control) => {
-            let params = serde_json::to_value(build_initialize_request())
-                .map_err(|e| acp_internal_error(format!("serialize initialize params: {e}")))?;
-            serde_json::from_value(control.initialize(params).await?)
-                .map_err(|e| acp_internal_error(format!("deserialize initialize result: {e}")))?
-        }
+    let params = session_initialize_params(shared.profile);
+    let result = match ctx.control.as_ref() {
+        Some(control) => control.initialize(params).await?,
         None => {
             connection
-                .send_request(build_initialize_request())
+                .send_request(agent_client_protocol::UntypedMessage::new(
+                    "initialize",
+                    params,
+                )?)
                 .block_task()
                 .await?
         }
     };
+    let init: InitializeResponse = serde_json::from_value(result)
+        .map_err(|e| acp_internal_error(format!("deserialize initialize result: {e}")))?;
 
     // The supervisor mirrors the typed error into events; a clean return
     // keeps the outer cleanup from adding a generic startup error.
